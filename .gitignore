@@ -1,6 +1,35 @@
+# Swift / SwiftPM
 .build/
+Packages/
 .swiftpm/
 DerivedData/
-*.o
-*.out
+*.xcodeproj
+*.xcworkspace
+.swiftpm/xcode/
 .DS_Store
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Engine (native binary artifacts)
+engine/bin/*
+!engine/bin/.gitkeep
+
+# C / C++ build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.out
+
+# Logs & temp files
+*.log
+*.tmp
+*.swp
+
+# VS Code
+.vscode/
+
+# my notes
+README.md
