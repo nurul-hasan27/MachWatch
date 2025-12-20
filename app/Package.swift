@@ -5,11 +5,18 @@ import PackageDescription
 
 let package = Package(
     name: "app",
+    products: [
+        .executable(
+            name: "app",
+            targets: ["app"]
+        )
+    ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
-            name: "app"
+            name: "app",
+            path: "Sources/app"
         ),
     ]
 )
