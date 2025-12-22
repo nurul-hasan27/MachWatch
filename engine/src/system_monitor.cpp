@@ -12,6 +12,8 @@
 #include <libproc.h>
 #include <mach/mach.h>
 #include <IOKit/IOKitLib.h>
+#include <chrono>
+#include <unordered_map>
 
 using namespace std;
 
@@ -161,16 +163,41 @@ void getDiskInfo(double &freeGB, double &totalGB) {
     totalGB = totalBytes / 1024.0 / 1024.0 / 1024.0;
 }
 
+// ----------Helper function - CPU CORE COUNT ----------
+int getCPUCoreCount() {
+    static int cores = 0;
+    if (cores == 0) {
+        size_t size = sizeof(cores);
+        sysctlbyname("hw.ncpu", &cores, &size, NULL, 0);
+    }
+    return cores;
+}
+
 // ---------- top cpu process ----------
-pid_t getTopCPUProcess()
-{
+static std::unordered_map<pid_t, uint64_t> lastCpuTimes;
+static auto lastSampleTime = std::chrono::steady_clock::now();
+std::vector<pid_t> getTopCPUProcesses(
+    int maxCount,
+    double &selfCPUPercent
+) {
+    selfCPUPercent = 0.0;
+
     pid_t pids[2048];
     int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
-
-    uint64_t maxCPU = 0;
-    pid_t topPID = -1;
-
     int count = bytes / sizeof(pid_t);
+
+    auto now = std::chrono::steady_clock::now();
+    double elapsedSeconds =
+        std::chrono::duration<double>(now - lastSampleTime).count();
+    lastSampleTime = now;
+
+    if (elapsedSeconds <= 0.0)
+        elapsedSeconds = 1.0;
+
+    int cores = getCPUCoreCount();
+    pid_t selfPID = getpid();
+
+    std::vector<std::pair<double, pid_t>> cpuList;
 
     for (int i = 0; i < count; i++) {
         pid_t pid = pids[i];
@@ -181,31 +208,57 @@ pid_t getTopCPUProcess()
                          PROC_PIDTASKINFO,
                          0,
                          &pti,
-                         sizeof(pti)) <= 0)
+                         sizeof(pti)) != sizeof(pti))
             continue;
 
-        uint64_t cpu = pti.pti_total_user + pti.pti_total_system;
+        uint64_t currentCpu =
+            pti.pti_total_user + pti.pti_total_system;
 
-        if (cpu > maxCPU) {
-            maxCPU = cpu;
-            topPID = pid;
-        }
+        uint64_t lastCpu = lastCpuTimes[pid];
+        uint64_t deltaCpu =
+            (currentCpu > lastCpu) ? (currentCpu - lastCpu) : 0;
+
+        lastCpuTimes[pid] = currentCpu;
+        if (deltaCpu == 0) continue;
+
+        double normalizedCPU =
+            (double)deltaCpu /
+            (elapsedSeconds * NSEC_PER_SEC * cores) * 100.0;
+
+        if (pid == selfPID)
+            selfCPUPercent = normalizedCPU;
+
+        cpuList.emplace_back(normalizedCPU, pid);
     }
 
-    return topPID;
-}
+    std::sort(cpuList.begin(), cpuList.end(),
+              [](auto &a, auto &b) {
+                  return a.first > b.first;
+              });
 
+    std::vector<pid_t> topPids;
+    for (int i = 0;
+         i < std::min(maxCount, (int)cpuList.size());
+         i++) {
+        topPids.push_back(cpuList[i].second);
+    }
+
+    return topPids;
+}
 
 // ---------- top memory process ----------
-pid_t getTopMemoryProcess()
+struct MemProcess {
+    pid_t pid;
+    uint64_t bytes;
+};
+std::vector<MemProcess> getTopMemoryProcesses(int maxCount = 5)
 {
     pid_t pids[2048];
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
+    int bytesRead = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
+    int count = bytesRead / sizeof(pid_t);
 
-    uint64_t maxMemory = 0;
-    pid_t topPID = -1;
-
-    int count = bytes / sizeof(pid_t);
+    std::vector<MemProcess> list;
+    list.reserve(count);
 
     for (int i = 0; i < count; i++) {
         pid_t pid = pids[i];
@@ -216,20 +269,45 @@ pid_t getTopMemoryProcess()
                          PROC_PIDTASKINFO,
                          0,
                          &pti,
-                         sizeof(pti)) <= 0)
+                         sizeof(pti)) != sizeof(pti)) {
             continue;
-
-        // Physical memory footprint (best public signal)
-        uint64_t mem = pti.pti_resident_size;
-
-        if (mem > maxMemory) {
-            maxMemory = mem;
-            topPID = pid;
         }
+
+        uint64_t mem = pti.pti_resident_size;
+        if (mem == 0) continue;
+
+        list.push_back({ pid, mem });
     }
 
-    return topPID;
+    std::sort(list.begin(), list.end(),
+              [](const MemProcess &a, const MemProcess &b) {
+                  return a.bytes > b.bytes;
+              });
+
+    if ((int)list.size() > maxCount)
+        list.resize(maxCount);
+
+    return list;
 }
+
+// ---------- top memory process ----------
+uint64_t getSelfMemoryBytes()
+{
+    struct proc_taskinfo pti;
+    if (proc_pidinfo(
+            getpid(),
+            PROC_PIDTASKINFO,
+            0,
+            &pti,
+            sizeof(pti)
+        ) != sizeof(pti)) {
+        return 0;
+    }
+
+    // Resident memory (what Activity Monitor shows)
+    return pti.pti_resident_size;
+}
+
 
 // ---------- uptime ----------
 double getUptimeSeconds()
@@ -256,10 +334,11 @@ int main() {
         getNetwork(down, up);
         double diskFree, diskTotal;
         getDiskInfo(diskFree, diskTotal);
-
-        pid_t topCPUPID = getTopCPUProcess();
-        pid_t topMemPID = getTopMemoryProcess();
+        double selfCPUPercent = 0.0;
+        std::vector<pid_t> topCPU = getTopCPUProcesses(5, selfCPUPercent);
+        auto topMem = getTopMemoryProcesses(5);
         double uptimeSeconds = getUptimeSeconds();
+        uint64_t selfMemBytes = getSelfMemoryBytes();
 
         cout << "{"
              << "\"cpu\":" << cpu << ","
@@ -271,10 +350,29 @@ int main() {
              << "\"net_up\":" << up << ","
              << "\"disk_free\":" << diskFree << ","
              << "\"disk_total\":" << diskTotal << ","
-             << "\"top_cpu_pid\":" << topCPUPID << ","
-             << "\"top_mem_pid\":" << topMemPID << ","
              << "\"uptime_seconds\":" << uptimeSeconds << ","
-             << "}" << endl;
+            << "\"self_cpu\":" << selfCPUPercent << ","
+            << "\"self_mem\":" << selfMemBytes << ",";
+
+        cout << "\"top_mem\":[";
+        for (size_t i = 0; i < topMem.size(); i++) {
+            cout << "{"
+                << "\"pid\":" << topMem[i].pid << ","
+                << "\"bytes\":" << topMem[i].bytes
+                << "}";
+            if (i + 1 < topMem.size()) cout << ",";
+        }
+        cout << "],";
+
+        cout << "\"top_cpu_pids\":[";
+        for (size_t i = 0; i < topCPU.size(); i++) {
+            cout << topCPU[i];
+            if (i + 1 < topCPU.size()) cout << ",";
+        }
+        cout << "]";
+
+        // close JSON
+        cout << "}" << endl;
 
         cout.flush();
         sleep(1);
