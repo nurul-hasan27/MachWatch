@@ -7,6 +7,11 @@ DerivedData/
 *.xcworkspace
 .swiftpm/xcode/
 .DS_Store
+*.app
+
+# Icons build output
+icon.iconset/
+icon.icns
 
 # Xcode user data
 xcuserdata/
