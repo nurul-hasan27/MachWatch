@@ -239,7 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         diskRow = MenuStatRowView(labelText: "Disk", valueText: "--")
         swapRow = MenuStatRowView(labelText: "Swap", valueText: "--")
         let memoryGraphLabel = NSMenuItem(title: "Memory Pressure", action: nil, keyEquivalent: "")
-        let cpuGraphLabel = NSMenuItem(title: "CPU History", action: nil, keyEquivalent: "")
+        let cpuGraphLabel = NSMenuItem(title: "CPU Load", action: nil, keyEquivalent: "")
 
         let editMenuItem = NSMenuItem(title: "Edit Menu Bar", action: nil, keyEquivalent: "")
 
@@ -553,7 +553,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 @objc func showAbout() {
-    let text = "2025\nCreated by Nurul Hasan\n\nGitHub"
+    let text = "Lightweight Real-time macOS\nsystem monitor\n\nCreated by Nurul Hasan\n\nGitHub"
 
     let attributed = NSMutableAttributedString(string: text)
 
